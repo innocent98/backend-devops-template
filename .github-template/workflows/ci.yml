@@ -104,9 +104,11 @@ jobs:
           REDIS_URL: "redis://localhost:6379/0"
           SECRET_KEY: ${{ secrets.CI_SECRET_KEY }}
           ENVIRONMENT: "test"
-          # Optional third-party keys — add to repo secrets if your app imports them.
-          # Leave unset to skip related tests, or set to a clearly-fake placeholder.
-          OPENAI_API_KEY: ${{ secrets.CI_OPENAI_API_KEY }}
+          # Add any third-party API keys your tests need here, pulling from repo secrets.
+          # By convention, name them CI_* (e.g., CI_STRIPE_API_KEY, CI_SUPABASE_JWT_SECRET).
+          # Use clearly-synthetic test values in the secrets — never real production keys.
+          # Example:
+          #   STRIPE_API_KEY: ${{ secrets.CI_STRIPE_API_KEY }}
         run: poetry run pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
 
       - name: Upload coverage reports

@@ -182,7 +182,9 @@ Next steps (one-time per project):
 3. Also add these repo-level secrets (shared across environments):
 
      CI_SECRET_KEY         # a 32+ char random string for test runs
-     CI_OPENAI_API_KEY     # optional — only if your tests need it
+     # Plus any CI_<SERVICE>_* secrets your tests need for third-party APIs.
+     # Example: CI_STRIPE_API_KEY, CI_SUPABASE_JWT_SECRET. Reference them in
+     # ci.yml under the "Run tests" step's env: block.
 
 4. On your VPS, bootstrap the deployment directories:
 
