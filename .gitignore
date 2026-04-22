@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python (in case contributors run scripts locally)
+__pycache__/
+*.pyc
+.venv/
+
+# Secrets (must NEVER be committed, even when the template is used in anger)
+.env
+.env.local
+.env.staging
+.env.production
