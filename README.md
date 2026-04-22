@@ -30,7 +30,7 @@ Existing files are **skipped** by default (safe to re-run). Use `--force` to ove
 
 ```
 .github/workflows/
-  ci.yml          # lint + test + build + Trivy SAST
+  ci.yml          # lint + test + Semgrep SAST + build + Trivy CVE scan
   cd.yml          # staging deploy → API E2E → production deploy
   docker.yml      # GHCR build+push
 
@@ -43,11 +43,12 @@ docs/deployment/
   BACKUPS_GUIDE.md          # backup + restore + cloud providers
 
 scripts/
-  env.sh            # encrypt/decrypt/verify/rotate/diff/generate-key
-  backup_db.sh      # dev-facing manual backup
-  backup_cron.sh    # cron-safe production backup (auto-installed by CD)
-  backup_status.sh  # backup health check
-  restore_db.sh     # restore with pre-restore safety snapshot
+  env.sh              # encrypt/decrypt/verify/rotate/diff/generate-key
+  backup_db.sh        # dev-facing manual backup
+  backup_cron.sh      # cron-safe production backup (auto-installed by CD)
+  backup_status.sh    # backup health check
+  restore_db.sh       # restore with pre-restore safety snapshot
+  security-scan.sh    # Semgrep SAST gate (run locally or in CI)
 ```
 
 Nothing else in your repo is touched.

@@ -117,10 +117,32 @@ jobs:
           name: codecov-umbrella
         continue-on-error: true
 
+  semgrep-scan:
+    name: SAST (Semgrep, source-code patterns)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Runs in parallel with lint + test. Blocks the build step.
+    # If scripts/security-scan.sh is absent (project hasn't adopted it yet), the
+    # step no-ops so CI doesn't break.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install semgrep
+        run: pipx install semgrep
+
+      - name: Run security scan
+        run: |
+          if [ -x ./scripts/security-scan.sh ]; then
+            ./scripts/security-scan.sh
+          else
+            echo "scripts/security-scan.sh not present; skipping semgrep SAST."
+            echo "To enable: copy it from backend-devops-template/scripts/ and chmod +x."
+          fi
+
   build:
     name: Build Docker Image
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, test, semgrep-scan]
 
     steps:
       - uses: actions/checkout@v4
@@ -138,8 +160,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  security-scan:
-    name: Security Scan (Trivy)
+  trivy-scan:
+    name: SAST (Trivy, dependency CVEs)
     runs-on: ubuntu-latest
     needs: [build]
 
