@@ -132,7 +132,7 @@ for wf in ci.yml cd.yml docker.yml; do
 done
 
 echo "Copying deployment docs…"
-for doc in DEPLOYMENT_GUIDE.md GITHUB_ACTIONS_SETUP.md CICD_PIPELINE.md PREDEPLOY_GUIDE.md ENV_ENCRYPTION.md; do
+for doc in DEPLOYMENT_GUIDE.md GITHUB_ACTIONS_SETUP.md CICD_PIPELINE.md PREDEPLOY_GUIDE.md ENV_ENCRYPTION.md BACKUPS_GUIDE.md; do
   src="$TEMPLATE_DIR/docs-template/deployment/$doc"
   dst="$TARGET/docs/deployment/$doc"
   [ -f "$src" ] || { echo "  SKIP (missing in template): $doc"; continue; }
@@ -141,13 +141,17 @@ for doc in DEPLOYMENT_GUIDE.md GITHUB_ACTIONS_SETUP.md CICD_PIPELINE.md PREDEPLO
 done
 
 echo "Copying scripts…"
-for sh in encrypt-env.sh; do
-  src="$TEMPLATE_DIR/scripts/$sh"
+shopt -s nullglob
+for src in "$TEMPLATE_DIR/scripts/"*.sh; do
+  sh="$(basename "$src")"
   dst="$TARGET/scripts/$sh"
-  [ -f "$src" ] || { echo "  SKIP (missing in template): $sh"; continue; }
   copy_with_overwrite_check "$src" "$dst"
-  [ -f "$dst" ] && { substitute "$dst"; chmod +x "$dst"; }
+  if [ -f "$dst" ]; then
+    substitute "$dst"
+    chmod +x "$dst"
+  fi
 done
+shopt -u nullglob
 
 # --- Post-install checklist -----------------------------------------------
 cat <<EOF
@@ -186,14 +190,35 @@ Next steps (one-time per project):
      sudo chown \$USER:\$USER /opt/${PROJECT_SLUG} /opt/${PROJECT_SLUG}-staging
      # Create .env for each stack (or let CD decrypt .env.<env>.enc).
 
-5. Encrypt your env files once (run from the repo root):
+5. Generate an encryption key and encrypt your env files (run from the repo root):
 
-     ENV_ENCRYPTION_KEY='<passphrase>' ./scripts/encrypt-env.sh staging
-     ENV_ENCRYPTION_KEY='<passphrase>' ./scripts/encrypt-env.sh production
+     # One-time: generate a 32-byte hex key
+     ./scripts/env.sh generate-key
+     # Save the output to GitHub secrets AND to a local .env.key (gitignored)
+
+     # Then encrypt each environment's .env:
+     ./scripts/env.sh encrypt staging
+     ./scripts/env.sh encrypt production
 
    Commit the .enc files, never the plaintext .env.<env> files.
+   Other useful commands: decrypt, verify, rotate, diff. Run with no args
+   for help:  ./scripts/env.sh
 
-6. Read docs/deployment/GITHUB_ACTIONS_SETUP.md for the full walkthrough,
+6. (Optional) Configure backups. The CD pipeline auto-installs a daily
+   cron that calls scripts/backup_cron.sh. For cloud uploads:
+
+     # Add to your .env.<env> (and re-encrypt):
+     #   ENABLE_CLOUD_BACKUP=true
+     #   CLOUD_PROVIDER=b2        # or: gdrive, dropbox, s3
+     #   B2_BUCKET=${PROJECT_SLUG}-backups   # for CLOUD_PROVIDER=b2
+     #   GDRIVE_FOLDER=${PROJECT_SLUG}-backups   # for CLOUD_PROVIDER=gdrive
+     #   AWS_S3_BUCKET=${PROJECT_SLUG}-backups   # for CLOUD_PROVIDER=s3
+     # Then install rclone (or awscli) on the VPS and run the provider's
+     # one-time configuration. See BACKUPS_GUIDE.md for exact steps.
+
+   See docs/deployment/BACKUPS_GUIDE.md for the full backup/restore flow.
+
+7. Read docs/deployment/GITHUB_ACTIONS_SETUP.md for the full walkthrough,
    and docs/deployment/CICD_PIPELINE.md for what each stage does.
 
 Done.
