@@ -54,9 +54,9 @@ git add .env.staging.enc
 git commit -m "chore: bump staging env"
 ```
 
-### 4. `workflow_run` uses the default branch's `cd.yml`
+### 4. Test pipeline changes from a branch, carefully
 
-Changes to `.github/workflows/cd.yml` on `develop` don't take effect for auto-triggered staging deploys until merged to `main`. For early testing of CD changes, use **Actions → Run workflow** (workflow_dispatch) on the feature branch — that uses the branch's current CD file.
+`cd-staging.yml` and `cd-production.yml` only run automatically for pushes to `develop` and `main`. To try a change to `.github/workflows/` or `actions/deploy-stack`, push the branch and use **Actions → Run workflow** with that branch selected: it uses that branch's copy of the file. A manual staging run with `image_tag` redeploys an existing image and builds nothing.
 
 ### 5. Migrations that add NOT NULL without a default
 

@@ -12,10 +12,11 @@
 #
 # What it does:
 #   1. Copies .github-template/workflows/ → <target>/.github/workflows/
-#   2. Copies docs-template/deployment/   → <target>/docs/deployment/
-#   3. Copies scripts/encrypt-env.sh      → <target>/scripts/encrypt-env.sh
-#   4. Substitutes {{TOKEN}} placeholders across the copied files.
-#   5. Prints a post-install checklist (secrets to add, SSH key to generate).
+#   2. Copies .github-template/actions/   → <target>/.github/actions/
+#   3. Copies docs-template/deployment/   → <target>/docs/deployment/
+#   4. Copies scripts/*.sh                → <target>/scripts/
+#   5. Substitutes {{TOKEN}} placeholders across the copied files.
+#   6. Prints a post-install checklist (secrets to add, SSH key to generate).
 
 set -euo pipefail
 
@@ -33,7 +34,7 @@ POETRY_VERSION="1.8.4"
 FORCE=0
 
 usage() {
-  sed -n '2,18p' "$0"
+  sed -n '2,19p' "$0"
   exit "${1:-0}"
 }
 
@@ -124,15 +125,33 @@ export PROJECT_NAME PROJECT_SLUG DEPLOY_PATH HEALTH_PATH API_PORT PY_VERSION POE
 
 # --- Copy files ------------------------------------------------------------
 echo "Copying workflows…"
-for wf in ci.yml cd.yml docker.yml; do
+for wf in ci.yml cd-staging.yml cd-production.yml; do
   src="$TEMPLATE_DIR/.github-template/workflows/$wf"
   dst="$TARGET/.github/workflows/$wf"
   copy_with_overwrite_check "$src" "$dst"
   [ -f "$dst" ] && substitute "$dst"
 done
 
+echo "Copying actions…"
+for act in deploy-stack; do
+  src="$TEMPLATE_DIR/.github-template/actions/$act/action.yml"
+  dst="$TARGET/.github/actions/$act/action.yml"
+  copy_with_overwrite_check "$src" "$dst"
+  [ -f "$dst" ] && substitute "$dst"
+done
+
+# Workflows from the old template that would now fight the new pipeline.
+for old in cd.yml docker.yml; do
+  if [ -f "$TARGET/.github/workflows/$old" ]; then
+    echo ""
+    echo "  WARNING: $TARGET/.github/workflows/$old is from the OLD template."
+    echo "           It builds images itself and conflicts with cd-staging.yml /"
+    echo "           cd-production.yml. Delete it:  git rm .github/workflows/$old"
+  fi
+done
+
 echo "Copying deployment docs…"
-for doc in DEPLOYMENT_GUIDE.md GITHUB_ACTIONS_SETUP.md CICD_PIPELINE.md PREDEPLOY_GUIDE.md ENV_ENCRYPTION.md BACKUPS_GUIDE.md; do
+for doc in DEPLOYMENT_GUIDE.md GITHUB_ACTIONS_SETUP.md CICD_PIPELINE.md BRANCHING.md ROLLBACK.md PREDEPLOY_GUIDE.md ENV_ENCRYPTION.md BACKUPS_GUIDE.md; do
   src="$TEMPLATE_DIR/docs-template/deployment/$doc"
   dst="$TARGET/docs/deployment/$doc"
   [ -f "$src" ] || { echo "  SKIP (missing in template): $doc"; continue; }
@@ -166,25 +185,34 @@ Next steps (one-time per project):
      ssh-copy-id -i ~/.ssh/${PROJECT_SLUG}_deploy.pub <user>@<vps-host>
 
 2. On GitHub → Settings → Environments, create two environments: "staging" and
-   "production". Add these secrets to each (values differ per environment):
+   "production". Add these SECRETS to each (values differ per environment):
 
      VPS_HOST              # e.g., vps.example.com
-     VPS_USERNAME          # e.g., deploy
+     VPS_USERNAME          # e.g., deploy (must be in the docker group)
      VPS_SSH_KEY           # contents of ~/.ssh/${PROJECT_SLUG}_deploy
-     VPS_PORT              # 22 by default
-     VPS_SSH_PASSPHRASE    # optional; leave unset if key has no passphrase
+     VPS_SSH_PASSPHRASE    # optional; leave unset if the key has no passphrase
      DEPLOY_PATH           # staging: /opt/${PROJECT_SLUG}-staging
                            # production: /opt/${PROJECT_SLUG}
-     APP_URL               # e.g., https://api.example.com${HEALTH_PATH%/*}
-     API_PORT              # staging: 8001; production: ${API_PORT}
-     ENV_ENCRYPTION_KEY    # the AES passphrase you used to encrypt .env.<env>.enc
+     ENV_ENCRYPTION_KEY    # the passphrase used to encrypt .env.<env>.enc
 
-3. Also add these repo-level secrets (shared across environments):
+   and these VARIABLES (not secrets) to each:
+
+     APP_URL               # e.g., https://staging-api.example.com${HEALTH_PATH%/*}
+     VPS_PORT              # optional, defaults to 22
+
+   For "production", add Required reviewers if you want a manual approval.
+
+3. Repo-level secrets (shared across environments):
 
      CI_SECRET_KEY         # a 32+ char random string for test runs
      # Plus any CI_<SERVICE>_* secrets your tests need for third-party APIs.
-     # Example: CI_STRIPE_API_KEY, CI_SUPABASE_JWT_SECRET. Reference them in
-     # ci.yml under the "Run tests" step's env: block.
+     # Reference them in ci.yml under the "Run tests" step's env: block.
+
+   Repo settings → Branches:
+     - develop: require a PR and the "CI gate" check.
+     - main:    require LINEAR HISTORY (this enforces fast-forward promotion;
+                see docs/deployment/BRANCHING.md). Without it, a squash or
+                merge commit lands on main and production refuses to deploy.
 
 4. On your VPS, bootstrap the deployment directories:
 
@@ -220,8 +248,13 @@ Next steps (one-time per project):
 
    See docs/deployment/BACKUPS_GUIDE.md for the full backup/restore flow.
 
-7. Read docs/deployment/GITHUB_ACTIONS_SETUP.md for the full walkthrough,
-   and docs/deployment/CICD_PIPELINE.md for what each stage does.
+7. Your Dockerfile must bake in alembic/ and alembic.ini (the VPS pulls the
+   image; it no longer receives them separately), and docker-compose.prod.yml
+   must take its API image from API_IMAGE (image: \${API_IMAGE}).
+
+8. Read docs/deployment/GITHUB_ACTIONS_SETUP.md for the full walkthrough,
+   docs/deployment/CICD_PIPELINE.md for what each stage does, and
+   docs/deployment/BRANCHING.md for how to release (fast-forward main).
 
 Done.
 ================================================================================

@@ -1,130 +1,80 @@
 # CI/CD Pipeline — {{PROJECT_NAME}}
 
-## The pipeline at a glance
+## The idea: build once, test that image, ship that image
+
+The image is built **one time**, on `develop`. That exact image is deployed to staging and tested. Production later redeploys the **same image**, identified by its digest, and never builds anything. What you tested is what you ship.
 
 ```
-Push to main/develop
-        │
-        ▼
-   ┌────────┐
-   │   CI   │  .github/workflows/ci.yml
-   │        │
-   │ 1. Lint (ruff + black)
-   │ 2. Test (pytest + Postgres + Redis, with coverage)
-   │ 3. Build Docker image (no push)
-   │ 4. Trivy filesystem SAST → GitHub Security tab
-   └───┬────┘
-       │ all green ✓
-       ▼
-   ┌────────────────────┐
-   │   staging-deploy   │  .github/workflows/cd.yml
-   │                    │
-   │ • Build + save image as tar.gz
-   │ • Decrypt .env.staging.enc with ENV_ENCRYPTION_KEY
-   │ • SCP image + compose file + alembic + .env → VPS
-   │ • docker load; alembic upgrade head; optional seed_data.py
-   │ • docker compose up -d
-   │ • Health check {{HEALTH_PATH}} (12 × 10s)
-   │ • Install daily backup cron (if scripts/backup_cron.sh exists)
-   └─────┬──────────────┘
-         │ staging healthy ✓
-         ▼
-   ┌────────────────────┐
-   │  staging-api-e2e   │
-   │                    │
-   │ • Flush http_* rate-limit keys in staging Redis
-   │ • pytest tests/e2e -m e2e against $APP_URL
-   │ • Upload logs as artifact
-   └─────┬──────────────┘
-         │ E2E green ✓ AND branch is main
-         ▼
-   ┌────────────────────┐
-   │ production-deploy  │
-   │                    │
-   │ Same steps as staging-deploy,
-   │ targeting /opt/{{PROJECT_SLUG}} instead of /opt/{{PROJECT_SLUG}}-staging.
-   └────────────────────┘
+PR → develop                 push to develop                         push to main
+     │                            │                                       │
+     ▼                            ▼                                       ▼
+ ┌────────┐             ┌──────────────────┐                      ┌────────────────┐
+ │  CI    │             │ CD (staging)     │                      │ CD (production)│
+ │ lint   │             │ 1 build + push   │                      │ 1 find the     │
+ │ test   │  merge      │   image (GHCR)   │   fast-forward       │   verified     │
+ │ semgrep│ ───────▶    │ 2 deploy staging │   main to develop    │   image        │
+ │ image  │             │ 3 live E2E       │ ──────────────────▶  │ 2 deploy it    │
+ │ scan   │             │ 4 mark verified  │                      │   (no build)   │
+ └────────┘             └──────────────────┘                      └────────────────┘
+                                 image  ghcr.io/<owner>/<repo>@sha256:…  (same bytes)
 ```
 
-## Why split CI and CD via `workflow_run`?
+## Files
 
-CI runs on every push and PR — cheap, parallel-friendly, no deploy side-effects. CD listens for `workflow_run: completed + success` before touching any infrastructure. This decoupling means:
+| File | Runs on | Does |
+|---|---|---|
+| `ci.yml` | PR to `develop`; push to `develop` | Lint, tests, Semgrep. On PRs also builds the image (not pushed) and scans it with Trivy. `CI gate` is the single check to require. |
+| `cd-staging.yml` | push to `develop`; manual | Build and push the image, deploy to staging, run live E2E, then mark the image verified. |
+| `cd-production.yml` | push to `main`; manual (rollback) | Find the verified image for this commit and deploy it. |
+| `actions/deploy-stack` | called by both CD workflows | The shared deploy: decrypt env, ship, pull by digest, migrate, health check, roll back on failure. |
+| `scripts/ghcr_digest.sh` | called by CD | Looks up an image's digest in GHCR. |
 
-- A red build can never trigger a deploy.
-- You can re-run CD manually (via `workflow_dispatch`) without re-running CI.
-- PRs from forks run CI but not CD (they can't access deploy secrets — GitHub policy).
+## How production knows an image was tested
 
-## Why a staging gate?
+After the live E2E passes, `cd-staging.yml` adds two tags to the tested image:
 
-The staging-deploy + staging-api-e2e pair is the key quality gate. Unit and integration tests in CI use `TestClient` — they call the ASGI app in-process, no network, no real HTTP. That catches ~80% of bugs but misses everything that depends on the real environment: NGINX in front, real TLS, real DB connection strings, real rate limiter, cold-start timing.
+- `staging-verified-<full commit sha>` — "this commit passed staging". Used when `main` is pushed.
+- `verified-sha256-<digest>` — "these exact bytes passed staging". Used for manual rollbacks.
 
-The staging E2E suite makes **real HTTP requests** against the deployed staging URL, using test accounts seeded by the deploy. If staging E2E fails, production doesn't deploy — period. This is a textbook progressive-delivery gate.
+`cd-production.yml` looks the tag up in the registry. No tag, no deploy. Only `cd-staging.yml` can add these tags, and only after E2E passes.
 
-## What makes real HTTP calls in CI vs. CD?
+## Why `main` must be a fast-forward of `develop`
+
+Production finds the image by the commit SHA. A fast-forward keeps the SHA unchanged; a squash or merge commit creates a new SHA that no image was built for. See `BRANCHING.md` for the exact commands and branch settings.
+
+## CI cost controls
+
+| Control | Effect |
+|---|---|
+| `main` is not a CI trigger | A commit arriving on `main` was already tested; it is not tested again. |
+| Docs-only PRs skip lint, tests and the image scan | Semgrep still runs. |
+| Draft PRs run nothing | Mark ready for review to run CI once. |
+| Superseded PR runs are cancelled | Three quick pushes cost one run. |
+| `CI gate` job | One check reports even when jobs are skipped, so branch protection stays simple. |
+
+## Real HTTP tests
 
 | Stage | What it runs | Real network? |
 |---|---|---|
-| CI `test` job | `pytest tests/ -v --cov=app` | No — `TestClient` is in-process ASGI |
-| CD `staging-api-e2e` | `pytest tests/e2e -m e2e` against `$APP_URL` | **Yes** — `requests.Session()` against the deployed API |
+| CI `Tests` | `pytest tests/` (in-process `TestClient`) | No |
+| CD `Live E2E` | `pytest tests/e2e -m e2e` against `$APP_URL` on the deployed staging stack | **Yes** |
 
-Put any test that needs a running server under `tests/e2e/` with `@pytest.mark.e2e`. The conftest should skip these when `E2E_BASE_URL` isn't set, so `pytest tests/` in CI skips them cleanly.
-
-### Projects without an E2E suite
-
-The `staging-api-e2e` job degrades gracefully:
+Put server-dependent tests under `tests/e2e/` marked `@pytest.mark.e2e`, and skip them in `conftest.py` when `E2E_BASE_URL` is unset.
 
 | Situation | Behavior |
 |---|---|
-| No `tests/e2e/` directory | Logs "skipping E2E", exits 0. Production-deploy gate passes. |
-| `tests/e2e/` exists but no tests collected with `-m e2e` | pytest exits 5 ("no tests collected"); the job treats this as success. |
-| `tests/e2e/` has failing tests | pytest exits non-zero; the job fails; production-deploy is blocked. |
+| No `tests/e2e/` directory | Logged and skipped; the image is still marked verified. |
+| `tests/e2e/` exists, no tests collected | pytest exit 5 is treated as success. |
+| An E2E test fails | The job fails; the image is **not** verified and cannot reach production. |
 
-In other words: having no E2E suite never blocks deploys. Having a broken E2E suite does. That's the correct behavior — the alternative (hard-requiring E2E tests) would force projects to create dummy test files just to satisfy CI.
+## Deploy mechanics (`deploy-stack`)
 
-## Branch strategy
+1. Check every secret is set. 2. Decrypt `.env.<env>.enc` on the runner. 3. Ship `.env` and `docker-compose.prod.yml` to `$DEPLOY_PATH`. 4. On the VPS: record the running image, log in to GHCR with the run's own short-lived token, pull the image **by digest**, pin `API_IMAGE` in `.env`. 5. Run `alembic upgrade head` and the optional `scripts/seed_data.py`. 6. `docker compose up -d`, then poll `{{HEALTH_PATH}}`. If any step fails, the previous image is restored.
 
-| Push to | CI runs? | Staging deploy? | Production deploy? |
-|---|---|---|---|
-| `develop` | ✅ | ✅ (if CI green) | ❌ |
-| `main` | ✅ | ✅ (if CI green) | ✅ (if staging E2E green) |
-| `v1.2.3` tag | ✅ (via Docker workflow) | ❌ | ❌ (tag only publishes versioned image) |
-| feature branch | ✅ | ❌ | ❌ |
-| PR from fork | ✅ (no secrets) | ❌ | ❌ |
+Production also installs the daily backup cron (`scripts/backup_cron.sh`).
 
-## Manual deploy
+No registry password is stored anywhere: the token is created for each run and expires when it ends.
 
-If you need to force-deploy a branch bypassing `workflow_run`:
+## Optional: companion frontend E2E
 
-**Actions → CD - Staging Gate and Deploy → Run workflow → select environment → Run workflow**
-
-Staging can be manually dispatched from any branch. Production manual dispatch still requires the staging-api-e2e job to pass first (the `needs:` gate is enforced regardless of trigger).
-
-## Image immutability
-
-Every deploy builds a new image tagged with the commit SHA (e.g., `{{PROJECT_SLUG}}-api:a1b2c3d`), saves it as `api-image.tar.gz`, and `scp`s it to the VPS. The VPS `docker load`s it, so each deploy runs a specific, immutable image — not whatever's at `:latest`. This is what makes rollback trivial: old SHA-tagged images stay on the VPS until pruned.
-
-The `docker image prune -f` step at the end of production-deploy removes untagged/dangling images but keeps all SHA-tagged ones for the rollback window.
-
-## Adding cross-repo coordination (optional)
-
-If you have a companion frontend repo with its own E2E suite (Playwright, Cypress, etc.), you can make the backend CD dispatch that workflow after staging deploy and wait for it to pass before production deploys. This is how the original Luran pipeline coordinated with the dashboard repo.
-
-The pattern:
-
-```yaml
-dashboard-staging-e2e:
-  needs: staging-deploy
-  steps:
-    - name: Dispatch dashboard workflow
-      env:
-        GH_TOKEN: ${{ secrets.CROSS_REPO_GITHUB_TOKEN }}
-      run: |
-        curl -X POST \
-          -H "Authorization: Bearer $GH_TOKEN" \
-          https://api.github.com/repos/$OWNER/$REPO/actions/workflows/staging-e2e.yml/dispatches \
-          -d '{"ref":"main","inputs":{"base_url":"'$APP_URL'"}}'
-    - name: Poll for completion
-      # loop on /actions/workflows/staging-e2e.yml/runs filtered by created_at
-```
-
-Then add `dashboard-staging-e2e` to the `needs:` of `production-deploy`. Omitted here to keep the template simple.
+If a frontend repo has its own E2E suite, add a job to `cd-staging.yml` after `staging-deploy` that dispatches the frontend workflow against `$APP_URL` and polls for its result, and add it to the `needs:` of `mark-verified`. It is left out to keep the template simple.

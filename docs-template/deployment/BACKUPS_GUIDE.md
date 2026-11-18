@@ -11,7 +11,7 @@ This project ships with a four-script backup/restore system under `scripts/`. It
 | `scripts/backup_status.sh` | Operators — health check | Either environment | Shows cron status, local + cloud counts, last log entries. |
 | `scripts/restore_db.sh` | Both | Wherever the DB container runs | Creates a safety backup *before* restoring. Requires `yes` typed literally. |
 
-> The production cron is installed **automatically** by the CD pipeline (`.github/workflows/cd.yml`) on every deploy. You don't need to touch cron manually on the VPS — see `CICD_PIPELINE.md`.
+> The production cron is installed **automatically** by the production deploy (`.github/actions/deploy-stack/action.yml`) on every deploy. You don't need to touch cron manually on the VPS — see `CICD_PIPELINE.md`.
 
 ## Quick start
 

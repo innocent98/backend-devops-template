@@ -1,143 +1,126 @@
 # GitHub Actions Setup — {{PROJECT_NAME}}
 
-This project ships with three workflows in `.github/workflows/`:
+The pipeline is three workflows and one shared action in `.github/`:
 
-| Workflow | Trigger | What it does |
+| File | Trigger | What it does |
 |---|---|---|
-| `ci.yml` | push/PR to `main`, `develop` | Lint, test (with Postgres + Redis service containers), Docker build, Trivy SAST. |
-| `cd.yml` | CI success on `main`/`develop`, or manual dispatch | Deploy staging → run API E2E against staging → deploy production if E2E passes. |
-| `docker.yml` | push to `main`/`develop`, tags `v*`, PRs | Build and push image to GitHub Container Registry (GHCR) with semver/SHA/branch tags. |
+| `workflows/ci.yml` | PR to `develop`, push to `develop` | Lint, tests, Semgrep; on PRs also builds and scans the image (not pushed). |
+| `workflows/cd-staging.yml` | push to `develop`, manual | Build once, push to GHCR, deploy staging, live E2E, mark the image verified. |
+| `workflows/cd-production.yml` | push to `main`, manual (rollback) | Deploy the verified image. Never builds. |
+| `actions/deploy-stack` | called by both CD workflows | Decrypt env, ship, pull by digest, migrate, health check, auto-rollback. |
 
-## One-time setup (≈10 minutes)
+How they fit together: `CICD_PIPELINE.md`. How to release: `BRANCHING.md`.
 
-### Step 1. Generate an SSH keypair for GitHub Actions → your VPS
+## One-time setup (about 15 minutes)
 
-On your laptop:
+### Step 1. SSH keypair for GitHub Actions → VPS
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/{{PROJECT_SLUG}}_deploy -C "gha-{{PROJECT_SLUG}}"
-# Press Enter for no passphrase (simpler for automation). If you do set one,
-# also add it as the VPS_SSH_PASSPHRASE secret.
-```
-
-Copy the **public** key to your VPS:
-
-```bash
 ssh-copy-id -i ~/.ssh/{{PROJECT_SLUG}}_deploy.pub <user>@<vps-host>
-# Verify:
 ssh -i ~/.ssh/{{PROJECT_SLUG}}_deploy <user>@<vps-host> 'echo ok'
 ```
 
-### Step 2. Create GitHub Environments
+No passphrase is simplest. If you set one, add it as `VPS_SSH_PASSPHRASE`.
 
-Go to **Settings → Environments** on the GitHub repo and create two environments: `staging` and `production`.
+### Step 2. Create the GitHub Environments
 
-Environments give you per-environment secrets and an optional manual approval gate for production.
+**Settings → Environments** → create `staging` and `production`. On `production`, add **Required reviewers** if you want a manual approval before each production deploy.
 
-### Step 3. Add environment secrets
+### Step 3. Environment secrets and variables
 
-Add the following secrets to **both** environments. Values differ per environment:
+Add to **both** environments (values differ):
 
-| Secret | Staging value | Production value |
+| Secret | Staging | Production |
 |---|---|---|
-| `VPS_HOST` | e.g., `vps.example.com` | same host (or different VPS) |
-| `VPS_USERNAME` | e.g., `deploy` | same |
-| `VPS_SSH_KEY` | contents of `~/.ssh/{{PROJECT_SLUG}}_deploy` (the PRIVATE key) | same |
-| `VPS_PORT` | `22` (optional) | same |
+| `VPS_HOST` | `vps.example.com` | same host, or another |
+| `VPS_USERNAME` | `deploy` (in the `docker` group) | same |
+| `VPS_SSH_KEY` | contents of `~/.ssh/{{PROJECT_SLUG}}_deploy` (the private key) | same |
 | `VPS_SSH_PASSPHRASE` | only if the key has one | same |
 | `DEPLOY_PATH` | `/opt/{{PROJECT_SLUG}}-staging` | `/opt/{{PROJECT_SLUG}}` |
+| `ENV_ENCRYPTION_KEY` | passphrase for `.env.staging.enc` | passphrase for `.env.production.enc` |
+
+| Variable (not secret) | Staging | Production |
+|---|---|---|
 | `APP_URL` | `https://staging-api.example.com` | `https://api.example.com` |
-| `API_PORT` | `8001` (so staging doesn't clash with prod) | `{{API_PORT}}` |
-| `ENV_ENCRYPTION_KEY` | passphrase used to encrypt `.env.staging.enc` | passphrase used to encrypt `.env.production.enc` |
+| `VPS_PORT` | `22` (optional) | same |
 
-> **Why the same VPS, different paths?** You can run both stacks on one server by giving each its own `DEPLOY_PATH`, `COMPOSE_PROJECT_NAME`, and `API_PORT`. Costs less, and staging exercises the real network path.
+`APP_URL` is a variable because GitHub shows it on the Environment page and the E2E suite targets it. The API's local port for health checks comes from `API_PORT` inside your `.env` (default `{{API_PORT}}`).
 
-### Step 4. Add repo-level secrets (shared)
+> Same VPS for both? Give each stack its own `DEPLOY_PATH`, `COMPOSE_PROJECT_NAME` and `API_PORT` (for example staging `8001`, production `{{API_PORT}}`) in its `.env`.
 
-**Settings → Secrets and variables → Actions → New repository secret**:
+### Step 4. Repo-level secrets
+
+**Settings → Secrets and variables → Actions**:
 
 | Secret | Why |
 |---|---|
-| `CI_SECRET_KEY` | 32+ char random string used by tests. Generate: `openssl rand -hex 32` |
-| `CI_OPENAI_API_KEY` | Only if your tests import OpenAI. Use a throwaway/test key. |
+| `CI_SECRET_KEY` | 32+ char random string for tests: `openssl rand -hex 32` |
+| `CI_<SERVICE>_*` | Throwaway keys your tests need for third-party APIs. Never real production keys. |
 
-> **Never put real-looking tokens inline in workflow YAML.** The previous version of this repo's CI had plaintext JWT-shaped strings committed in `ci.yml` — even when they're test values, they train bad habits and can be mistaken for leaked production secrets during audits. Always pull from `${{ secrets.X }}`.
+Never put token-looking values inline in workflow YAML; always `${{ secrets.X }}`.
 
-### Step 5. Bootstrap VPS directories
+There is **no registry secret to create**. The VPS pulls the image from GHCR using the workflow run's own short-lived `GITHUB_TOKEN`.
 
-SSH into your VPS:
+### Step 5. Branch settings
+
+See the table in `BRANCHING.md`. The two that matter: `main` requires **linear history**, `develop` requires a PR and the **CI gate** check.
+
+### Step 6. Bootstrap the VPS
 
 ```bash
 sudo mkdir -p /opt/{{PROJECT_SLUG}} /opt/{{PROJECT_SLUG}}-staging
 sudo chown "$USER:$USER" /opt/{{PROJECT_SLUG}} /opt/{{PROJECT_SLUG}}-staging
-
-# Install Docker if not already present:
 curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker "$USER"  # log out/in after this
-
-docker compose version   # should print a v2 version
+sudo usermod -aG docker "$USER"      # log out and in afterwards
+docker compose version                # must print v2
 ```
 
-Each stack also needs its own `.env` on the VPS. You have two options:
+The environment file is **encrypted in the repo** (`.env.staging.enc`, `.env.production.enc`) and decrypted on the runner at deploy time. A deploy fails if the `.enc` file or key is missing; there is no "use whatever `.env` is on the server" mode. See `ENV_ENCRYPTION.md`.
 
-**Option A — encrypted-in-repo (recommended):** commit `.env.staging.enc` and `.env.production.enc` to git; CD decrypts them at deploy time using `ENV_ENCRYPTION_KEY`. See `docs/deployment/ENV_ENCRYPTION.md`.
+### Step 7. What your project must provide
 
-**Option B — manual on VPS:** create `/opt/{{PROJECT_SLUG}}-staging/.env` and `/opt/{{PROJECT_SLUG}}/.env` by hand; CD will leave them in place. Set `chmod 600 .env` — `/opt` is world-readable by default.
+- `Dockerfile` that copies `alembic/` and `alembic.ini` into the image (the VPS gets the image, not the source).
+- `docker-compose.prod.yml` whose API service uses `image: ${API_IMAGE}` and is named `api`.
+- A health endpoint at `{{HEALTH_PATH}}`.
 
-### Step 6. First deploy
+### Step 8. First release
 
-Push to `develop` → CI runs → on green, staging is deployed → API E2E runs → if green and the push was on `main`, production is deployed.
+1. Merge a PR into `develop`. **CD (staging)** builds, deploys, tests and marks the image verified.
+2. Fast-forward `main` to `develop` (`git push origin origin/develop:main`). **CD (production)** deploys that image.
 
-Or trigger manually: **Actions → CD - Staging Gate and Deploy → Run workflow → Select environment**.
-
-## Verifying the deploy on the VPS
+## Verifying a deploy on the VPS
 
 ```bash
-cd /opt/{{PROJECT_SLUG}}    # or /opt/{{PROJECT_SLUG}}-staging
+cd /opt/{{PROJECT_SLUG}}            # or /opt/{{PROJECT_SLUG}}-staging
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs --tail=100 api
 curl -sS http://localhost:{{API_PORT}}{{HEALTH_PATH}}
-docker images | grep {{PROJECT_SLUG}}-api
-docker inspect {{PROJECT_SLUG}}-api:latest --format='{{.Created}}'
+grep '^API_IMAGE=' .env             # shows the exact digest running
 ```
 
-If health is OK and containers are up, the deploy is live.
+## Rollback
 
-## Manual rollback
-
-The workflow doesn't auto-rollback. To revert:
-
-```bash
-ssh <user>@<vps-host>
-cd /opt/{{PROJECT_SLUG}}
-# Find the previous image tag (SHAs are stored per deploy):
-docker images | grep {{PROJECT_SLUG}}-api
-
-# Re-tag the previous SHA as what compose pulls:
-docker tag {{PROJECT_SLUG}}-api:<previous-sha> {{PROJECT_SLUG}}-api:latest
-docker compose -f docker-compose.prod.yml up -d
-```
+Automatic on a failed deploy; manual by redeploying an earlier verified tag. See `ROLLBACK.md`.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| CD fails with `Permission denied (publickey)` | SSH key not added to VPS — rerun `ssh-copy-id`. |
-| CD fails with `No such file or directory: /opt/…` | VPS bootstrap skipped — run Step 5 above. |
-| CI fails with `Module not found` | `poetry.lock` missing — `git add poetry.lock && git commit`. |
-| Docker build fails in CI | Test locally first: `docker build -t {{PROJECT_SLUG}}-api .` |
-| Health check times out after 12×10s | SSH into VPS; `docker compose logs --tail=200`. Most common cause: missing env var. |
+| `Empty deploy input(s): …` | The named secret is unset in that GitHub Environment. |
+| `Permission denied (publickey)` | The key is not on the VPS: rerun `ssh-copy-id`. |
+| `denied` / `unauthorized` pulling the image | The job must have `permissions: packages: read` (the workflows set it). If the package is owned by another repo, link it to this repo under the package's settings. |
+| Production: "No image for this commit" | `main` was not a fast-forward of `develop`. See `BRANCHING.md`. |
+| Production: "Not verified on staging" | The staging run for that commit failed, was cancelled, or is still running. |
+| `No such file or directory: /opt/…` | VPS bootstrap skipped: run Step 6. |
+| Health check never returns 200 | `docker compose logs --tail=200 api` on the VPS. Most common cause: a missing env var. |
+| `Could not decrypt .env.<env>.enc` | Wrong `ENV_ENCRYPTION_KEY` for that environment. |
 
-## What each secret is used for
+## Where each secret is used
 
-| Secret | Used in |
+| Secret / variable | Used in |
 |---|---|
-| `VPS_HOST`, `VPS_USERNAME`, `VPS_SSH_KEY`, `VPS_PORT`, `VPS_SSH_PASSPHRASE` | `cd.yml` — SSH into the VPS for file copy + deploy |
-| `DEPLOY_PATH` | `cd.yml` — which directory on the VPS to deploy into |
-| `APP_URL` | `cd.yml` — E2E target for staging API tests |
-| `API_PORT` | `cd.yml` — local port the container exposes for health checks |
-| `ENV_ENCRYPTION_KEY` | `cd.yml` — decrypts `.env.<env>.enc` before scp |
-| `CI_SECRET_KEY`, `CI_OPENAI_API_KEY` | `ci.yml` — env for the test job |
-| `GITHUB_TOKEN` (auto) | `docker.yml` — logs into GHCR |
-
-That's it.
+| `VPS_*`, `DEPLOY_PATH`, `ENV_ENCRYPTION_KEY` | `actions/deploy-stack` (called by both CD workflows) |
+| `APP_URL` | `cd-staging.yml` E2E target; shown as the Environment URL |
+| `CI_*` | `ci.yml` test job |
+| `GITHUB_TOKEN` (automatic) | GHCR push in `cd-staging.yml`; GHCR pull on the VPS |

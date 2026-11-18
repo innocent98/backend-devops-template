@@ -150,4 +150,4 @@ Store it in **exactly three** places:
 - PBKDF2 with 100k iterations is fine for keys with ≥128 bits of entropy (a hex-32 key has 256 bits).
 - We're not trying to resist a state-level adversary with repo read access — we're trying to make `git clone` insufficient to recover the secrets. AES-256 does that.
 
-If you need per-user access control (different devs see different secrets), switch to `sops` + AWS KMS / age, and swap out `scripts/env.sh` and the decrypt step in `cd.yml`. The rest of the pipeline doesn't care how the `.env` comes into existence — only that it exists at `$DEPLOY_PATH/.env` on the VPS before `docker compose up`.
+If you need per-user access control (different devs see different secrets), switch to `sops` + AWS KMS / age, and swap out `scripts/env.sh` and the decrypt step in `.github/actions/deploy-stack/action.yml`. The rest of the pipeline doesn't care how the `.env` comes into existence — only that it exists at `$DEPLOY_PATH/.env` on the VPS before `docker compose up`.

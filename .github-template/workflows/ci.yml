@@ -1,47 +1,101 @@
 name: CI
 
+# What runs when (see docs/deployment/BRANCHING.md):
+#
+#   | event               | CI runs                              |
+#   |---------------------|--------------------------------------|
+#   | PR -> develop       | everything (docs-only PRs skip code) |
+#   | PR -> develop draft | nothing (mark ready to run CI)       |
+#   | push to develop     | lint, test, security (safety net)    |
+#   | push to main        | nothing                              |
+#
+# `main` is deliberately absent. Promotion to main is a fast-forward of develop,
+# so the commit that lands on main is byte-identical to one that already passed
+# here, and whose image was already built and E2E-tested by cd-staging.yml.
+# Re-running CI on main would test the same tree again for no new information.
+#
+# The release image is NOT built here. CI only proves the Dockerfile builds and
+# is free of HIGH/CRITICAL CVEs (PR only, nothing is pushed). cd-staging.yml is
+# the only workflow that publishes an image.
+
 on:
   push:
-    branches: [main, develop]
+    branches: [develop]
   pull_request:
-    branches: [main, develop]
+    branches: [develop]
+    # `ready_for_review` is needed so a draft PR runs CI when it is marked ready.
+    types: [opened, reopened, ready_for_review, synchronize]
+
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  # Cancel superseded PR runs. Never cancel a push to develop: that run is the
+  # only safety net a direct push gets.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
+  changes:
+    name: Classify changes
+    # Draft PRs run nothing.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - name: Is this more than a docs-only change?
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api --paginate "repos/$REPO/pulls/$PR/files" -q '.[].filename' > changed.txt
+          # Docs-only = every changed file is under docs/ or is a markdown file.
+          if grep -qvE '^docs/|\.md$' changed.txt; then CODE=true; else CODE=false; fi
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
   lint:
-    name: Lint Code
+    name: Lint
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '{{PY_VERSION}}'
 
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
+      - uses: snok/install-poetry@v1
         with:
           version: {{POETRY_VERSION}}
           virtualenvs-create: true
           virtualenvs-in-project: true
 
-      - name: Load cached venv
+      - name: Cache virtualenv
         uses: actions/cache@v4
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
 
-      - name: Install dependencies
-        run: poetry install --no-interaction --no-root --with dev
-
-      - name: Lint with ruff
-        run: poetry run ruff check app/
-
-      - name: Check formatting with black
-        run: poetry run black --check app/
+      - run: poetry install --no-interaction --no-root --with dev
+      - run: poetry run ruff check app/
+      - run: poetry run black --check app/
 
   test:
-    name: Run Tests
+    name: Tests
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -72,30 +126,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '{{PY_VERSION}}'
 
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
+      - uses: snok/install-poetry@v1
         with:
           version: {{POETRY_VERSION}}
           virtualenvs-create: true
           virtualenvs-in-project: true
 
-      - name: Load cached venv
+      - name: Cache virtualenv
         uses: actions/cache@v4
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
 
-      - name: Install dependencies
-        run: poetry install --no-interaction --no-root --with dev
+      - run: poetry install --no-interaction --no-root --with dev
 
-      # All non-trivial CI env values come from repo secrets.
-      # Set them once under: Settings → Secrets and variables → Actions.
-      # Use clearly-synthetic dummy values for anything that just needs to be present.
+      # Secrets come from repo secrets, never inline. Name them CI_* and give
+      # them clearly synthetic test values. Add any third-party keys your tests
+      # need to the env block, e.g.  STRIPE_API_KEY: ${{ secrets.CI_STRIPE_API_KEY }}
       - name: Run tests
         env:
           SERVER_HOST: "http://localhost:8000"
@@ -104,83 +155,84 @@ jobs:
           REDIS_URL: "redis://localhost:6379/0"
           SECRET_KEY: ${{ secrets.CI_SECRET_KEY }}
           ENVIRONMENT: "test"
-          # Add any third-party API keys your tests need here, pulling from repo secrets.
-          # By convention, name them CI_* (e.g., CI_STRIPE_API_KEY, CI_SUPABASE_JWT_SECRET).
-          # Use clearly-synthetic test values in the secrets — never real production keys.
-          # Example:
-          #   STRIPE_API_KEY: ${{ secrets.CI_STRIPE_API_KEY }}
         run: poetry run pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
 
-      - name: Upload coverage reports
+      - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.xml
           flags: unittests
-          name: codecov-umbrella
         continue-on-error: true
 
-  semgrep-scan:
-    name: SAST (Semgrep, source-code patterns)
+  security:
+    name: Security (Semgrep)
+    needs: [changes]
+    # Runs even on docs-only PRs: a pasted secret or a bad snippet lands in docs too.
+    if: needs.changes.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Runs in parallel with lint + test. Blocks the build step.
-    # If scripts/security-scan.sh is absent (project hasn't adopted it yet), the
-    # step no-ops so CI doesn't break.
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install semgrep
-        run: pipx install semgrep
+      - run: pipx install semgrep
 
       - name: Run security scan
         run: |
           if [ -x ./scripts/security-scan.sh ]; then
             ./scripts/security-scan.sh
           else
-            echo "scripts/security-scan.sh not present; skipping semgrep SAST."
-            echo "To enable: copy it from backend-devops-template/scripts/ and chmod +x."
+            echo "scripts/security-scan.sh not present; skipping Semgrep."
           fi
 
-  build:
-    name: Build Docker Image
+  image-check:
+    name: Image builds and has no HIGH/CRITICAL CVEs
+    # PRs only. A push to develop is followed by cd-staging.yml, which builds
+    # the real image and fails before deploying if the build is broken.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
+    needs: [changes, lint, test, security]
     runs-on: ubuntu-latest
-    needs: [lint, test, semgrep-scan]
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Build image (no push)
+      - name: Build image (local only, not pushed)
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
           push: false
-          tags: {{PROJECT_SLUG}}-api:${{ github.sha }}
+          load: true
+          tags: {{PROJECT_SLUG}}-api:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  trivy-scan:
-    name: SAST (Trivy, dependency CVEs)
+      # Scans the finished image, so it sees OS packages too. CVEs with no
+      # released fix are ignored (nothing can be upgraded); list accepted
+      # exceptions in a .trivyignore file at the repo root.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: {{PROJECT_SLUG}}-api:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+  # The one check that always reports. Jobs above are legitimately skipped on a
+  # docs-only PR, and a skipped required check would block the merge. Require
+  # THIS check in branch protection, not the individual jobs.
+  ci-gate:
+    name: CI gate
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    needs: [changes, lint, test, security, image-check]
     runs-on: ubuntu-latest
-    needs: [build]
-
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-        continue-on-error: true
-
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: 'trivy-results.sarif'
-        continue-on-error: true
+      - name: Every job that ran must have passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          BAD=$(echo "$RESULTS" | jq -r '[to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key] | join(", ")')
+          if [ -n "$BAD" ]; then
+            echo "::error::failed or cancelled: $BAD"
+            exit 1
+          fi
