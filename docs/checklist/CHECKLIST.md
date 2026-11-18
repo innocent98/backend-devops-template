@@ -15,7 +15,7 @@ Legend: `[x]` done and verified · `[ ]` not done · "(static)" = linted and ins
 - [x] `install.sh` updated and install-tested
 - [x] Docs: `BRANCHING.md`, `ROLLBACK.md`, `CICD_PIPELINE.md`, `GITHUB_ACTIONS_SETUP.md`, README
 - [x] SOP: `docs/sop/2026-11-18-build-once-promote-pipeline.md`
-- [ ] Commit and push to `origin` (git@github.com:innocent98/backend-devops-template.git)
+- [x] Commit and push to `origin` (367729a, 2026-11-18)
 - [ ] First live run on a real project; confirm retag digest match, VPS deploy, rollback
 
 ## Module 2: Adopt in existing projects

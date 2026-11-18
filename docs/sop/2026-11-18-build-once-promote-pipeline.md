@@ -1,6 +1,6 @@
 # SOP: Build-once, promote-by-digest pipeline
 
-**Date:** 2026-11-18 · **Status:** written and statically verified; not yet run on a real repo and VPS (see Verification) · **Commit:** not committed yet
+**Date:** 2026-11-18 · **Status:** written and statically verified; not yet run on a real repo and VPS (see Verification) · **Commit:** 367729a (pushed to `main`)
 
 ## What shipped
 
