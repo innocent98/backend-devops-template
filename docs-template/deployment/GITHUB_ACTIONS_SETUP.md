@@ -25,7 +25,16 @@ No passphrase is simplest. If you set one, add it as `VPS_SSH_PASSPHRASE`.
 
 ### Step 2. Create the GitHub Environments
 
-**Settings → Environments** → create `staging` and `production`. On `production`, add **Required reviewers** if you want a manual approval before each production deploy.
+**Settings → Environments** → create `staging` and `production`, then set **Deployment branches** on each. This is required, not optional:
+
+| Environment | Deployment branches | Why |
+|---|---|---|
+| `staging` | Selected branches → `develop` | Only workflows running on `develop` can read staging secrets. |
+| `production` | Selected branches → `main` | Only workflows running on `main` can read production secrets. |
+
+Without this, anyone with write access could push a branch containing a modified workflow and run it with the environment's secrets. The `github.ref` checks inside the workflows only stop accidental manual runs; a branch can edit its own copy of the file, so the Environment rule is the real control.
+
+On `production`, also add **Required reviewers** for a manual approval before each deploy.
 
 ### Step 3. Environment secrets and variables
 

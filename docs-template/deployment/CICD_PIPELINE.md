@@ -42,6 +42,16 @@ After the live E2E passes, `cd-staging.yml` adds two tags to the tested image:
 
 Production finds the image by the commit SHA. A fast-forward keeps the SHA unchanged; a squash or merge commit creates a new SHA that no image was built for. See `BRANCHING.md` for the exact commands and branch settings.
 
+## Trust boundary: who can release
+
+The "verified" tags are ordinary registry tags. The pipeline's safety rests on **who can run workflows with deploy secrets**, so:
+
+- Set **Deployment branches** on both Environments (`GITHUB_ACTIONS_SETUP.md`, Step 2). This is the control that keeps other branches away from secrets.
+- Treat repo write access as release power: anyone who can push workflow changes to `develop` can make an image look verified. Review changes to `.github/` like production code.
+- If you need to defend against that, replace the tags with signed attestations (cosign or GitHub artifact attestations) that production checks against the `cd-staging.yml` identity. The template leaves that out to stay simple.
+
+All actions are pinned to full commit SHAs. `.github/dependabot.yml` opens one weekly PR with the bumps; review it like any dependency update.
+
 ## CI cost controls
 
 | Control | Effect |

@@ -12,7 +12,7 @@
 #
 # What it does:
 #   1. Copies .github-template/workflows/ → <target>/.github/workflows/
-#   2. Copies .github-template/actions/   → <target>/.github/actions/
+#   2. Copies .github-template/actions/   → <target>/.github/actions/ (+ dependabot.yml)
 #   3. Copies docs-template/deployment/   → <target>/docs/deployment/
 #   4. Copies scripts/*.sh                → <target>/scripts/
 #   5. Substitutes {{TOKEN}} placeholders across the copied files.
@@ -140,6 +140,9 @@ for act in deploy-stack; do
   [ -f "$dst" ] && substitute "$dst"
 done
 
+echo "Copying dependabot config…"
+copy_with_overwrite_check "$TEMPLATE_DIR/.github-template/dependabot.yml" "$TARGET/.github/dependabot.yml"
+
 # Workflows from the old template that would now fight the new pipeline.
 for old in cd.yml docker.yml; do
   if [ -f "$TARGET/.github/workflows/$old" ]; then
@@ -200,7 +203,11 @@ Next steps (one-time per project):
      APP_URL               # e.g., https://staging-api.example.com${HEALTH_PATH%/*}
      VPS_PORT              # optional, defaults to 22
 
-   For "production", add Required reviewers if you want a manual approval.
+   On each Environment, set "Deployment branches" (REQUIRED, not optional):
+     staging    -> develop only
+     production -> main only
+   This is what stops someone running a modified workflow from another branch
+   with production secrets. Also add Required reviewers on production.
 
 3. Repo-level secrets (shared across environments):
 

@@ -21,7 +21,9 @@ The old template rebuilt the image in the staging job and again in the productio
 | Deploy logic | One composite action used by both environments | Two copy-pasted blocks (drift risk) |
 | Rollback | Auto-restore of the previous image on a failed deploy; manual redeploy of a verified tag | `docker tag … :latest` on the VPS |
 | CI cost | No CI on `main`; docs-only and draft PRs skip; superseded PR runs cancel; one `CI gate` check | Running the full suite on every push and PR |
-| Left out on purpose | SBOM, SLSA provenance, cosign signing, test sharding, pinned SHAs for first-party actions | Kept in Cofoundaz-api; they add length and jargon the template does not need. SSH/SCP actions are SHA-pinned because they hold the deploy key. |
+| Action pinning | Every action pinned to a full commit SHA (version in a comment); weekly `dependabot.yml` PR bumps them | Mutable tags: a tag can be repointed (the trivy-action incident) |
+| Who can reach deploy secrets | Environment "Deployment branches" (`staging` → develop, `production` → main), documented as required; `github.ref` checks in the workflows only stop accidental runs | `if: github.ref` alone: a branch edits its own copy of the workflow, so it is not a control |
+| Left out on purpose | SBOM, SLSA provenance, cosign/attestation signing, test sharding | Kept in Cofoundaz-api; they add length and jargon the template does not need. Consequence: the "verified" tags are plain registry tags, so anyone who can push workflows to the repo can mint one. Documented as the trust boundary in `CICD_PIPELINE.md`. |
 
 Ideas kept from Cofoundaz-api: digest deploys, proof tags, composite deploy action, `ci-gate`, path filter, draft skipping, `ghcr_digest.sh` exit codes (0 found, 2 missing, 1 other). Behavior changes versus the old template: a missing `.env.<env>.enc` now fails the deploy (no "use the server's `.env`" mode); backup cron installs on production only; alembic must be baked into the image.
 
@@ -33,6 +35,7 @@ Ideas kept from Cofoundaz-api: digest deploys, proof tags, composite deploy acti
 | `.github-template/workflows/cd-staging.yml` | New: build, deploy, live E2E, mark verified, manual `image_tag` redeploy |
 | `.github-template/workflows/cd-production.yml` | New: resolve verified image, deploy; manual `image_tag` rollback |
 | `.github-template/actions/deploy-stack/action.yml` | New shared deploy |
+| `.github-template/dependabot.yml` | New: weekly bump PR for pinned actions (installed to `.github/dependabot.yml`) |
 | `.github-template/workflows/cd.yml`, `docker.yml` | Removed |
 | `scripts/ghcr_digest.sh` | New (from Cofoundaz-api, made generic) |
 | `install.sh` | Copies the new files, warns about leftover old `cd.yml`/`docker.yml`, new checklist |
@@ -52,6 +55,17 @@ Config an adopting project needs: secrets `VPS_HOST`, `VPS_USERNAME`, `VPS_SSH_K
 | `ghcr_digest.sh` against a public GHCR image | existing tag returns a digest (rc 0); missing tag returns rc 2 |
 | **Not verified live:** the `imagetools create` retag keeping the same digest, the VPS deploy/rollback script, GHCR pull with `GITHUB_TOKEN`, E2E job | These need a real repo, GHCR package and VPS. The workflow asserts the digest match at mint time, so a retag problem fails loudly. First adoption (suggest a low-risk project) is the live test. |
 
+## Security review follow-up (2026-11-18, same day)
+
+An automated review of the first push found four issues; all handled in the follow-up commit:
+
+| Finding | Resolution |
+|---|---|
+| Docs-only path filter bypass: a code file renamed into `docs/` looked docs-only | `ci.yml` now also checks `previous_filename` |
+| `workflow_dispatch` runnable from any branch | Branch guards added; Environment deployment-branch rules documented as required in setup docs, `BRANCHING.md` and the installer checklist |
+| Proof tag forgeable by anyone with `packages: write` | Accepted trade-off, documented trust boundary; attestations are the upgrade path |
+| Unpinned actions | All pinned to SHAs, plus `dependabot.yml`. Also fixed a real bug: `trivy-action@0.28.0` is not a tag that exists (it is `v0.28.0`); now pinned to the reviewed v0.36.0 commit used by Cofoundaz-api |
+
 ## Operate / roll back
 
 Install: `./install.sh --target <repo> --name "…" --slug …`. Migrating an existing project: see README "Moving a project off the old template". To revert this change in the template: `git revert` the commit; installed projects keep whatever they copied.
@@ -59,6 +73,5 @@ Install: `./install.sh --target <repo> --name "…" --slug …`. Migrating an ex
 ## Follow-ups
 
 - Run it live on one project and record real captures; fix anything the first run shows.
-- Decide whether to template a `dependabot.yml` for action version bumps, and whether to SHA-pin first-party actions.
 - Optional modules left out: companion-frontend E2E dispatch, test sharding, SBOM/provenance.
 - Haven, Luran and Timpbills could adopt this later (Timpbills first: it builds twice and uses mutable tags).

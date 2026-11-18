@@ -42,6 +42,10 @@ jobs:
   resolve-image:
     name: Find the staging-verified image
     runs-on: ubuntu-latest
+    # Stops an accidental manual run from another branch. Not a security control
+    # (a branch can edit its own copy of this file): the real control is the
+    # `production` Environment's "Deployment branches" rule, main only.
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: read
@@ -50,7 +54,7 @@ jobs:
       proof: ${{ steps.resolve.outputs.proof }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Resolve and verify
         id: resolve
@@ -137,7 +141,7 @@ jobs:
       packages: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: ./.github/actions/deploy-stack
         with:

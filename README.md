@@ -37,6 +37,7 @@ Existing files are **skipped** by default (safe to re-run). Use `--force` to ove
   cd-production.yml  # push main: deploy the verified image (never builds); manual run = rollback
 .github/actions/
   deploy-stack/      # shared deploy: decrypt env, pull by digest, migrate, health check, auto-rollback
+.github/dependabot.yml   # weekly PR to bump the SHA-pinned actions
 
 docs/deployment/
   GITHUB_ACTIONS_SETUP.md   # secrets + SSH key walkthrough
@@ -69,7 +70,7 @@ The installer prints a checklist. In short:
 3. Create GitHub Environments `staging` and `production`, add the secrets and variables listed in `docs/deployment/GITHUB_ACTIONS_SETUP.md`.
 4. Generate an encryption key: `./scripts/env.sh generate-key`
 5. Encrypt your envs: `./scripts/env.sh encrypt staging && ./scripts/env.sh encrypt production`
-6. Branch settings: `main` requires **linear history**; `develop` requires a PR and the **CI gate** check.
+6. Branch settings: `main` requires **linear history**; `develop` requires a PR and the **CI gate** check. Set each Environment's **Deployment branches** (`staging` → `develop`, `production` → `main`).
 7. Merge to `develop` — staging builds, deploys and tests the image. Then `git push origin origin/develop:main` — production deploys that same image.
 
 ## What the template assumes

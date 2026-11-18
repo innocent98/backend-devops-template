@@ -48,6 +48,8 @@ git push origin main
 | `main` | Restrict who can push (maintainers only) | A direct push is how you fast-forward. Do **not** also require a pull request on `main`, or your own fast-forward push will be rejected. |
 | `main` | Block force pushes and deletion | Keeps production history intact. |
 | `develop` | Require a pull request and the **CI gate** check | Every change is tested before it reaches staging. |
+| Environment `production` | Deployment branches: `main` only | Production secrets are unreachable from any other branch. |
+| Environment `staging` | Deployment branches: `develop` only | Same, for staging. |
 
 ## Hotfixes
 

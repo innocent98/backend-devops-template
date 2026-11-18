@@ -16,6 +16,7 @@ Legend: `[x]` done and verified · `[ ]` not done · "(static)" = linted and ins
 - [x] Docs: `BRANCHING.md`, `ROLLBACK.md`, `CICD_PIPELINE.md`, `GITHUB_ACTIONS_SETUP.md`, README
 - [x] SOP: `docs/sop/2026-11-18-build-once-promote-pipeline.md`
 - [x] Commit and push to `origin` (367729a, 2026-11-18)
+- [x] Security review follow-up: rename bypass fixed, actions SHA-pinned, `dependabot.yml`, branch guards, Environment deployment-branch rules documented (2026-11-18)
 - [ ] First live run on a real project; confirm retag digest match, VPS deploy, rollback
 
 ## Module 2: Adopt in existing projects
@@ -26,11 +27,10 @@ Legend: `[x]` done and verified · `[ ]` not done · "(static)" = linted and ins
 
 ## Backlog
 
-- [ ] `dependabot.yml` for action updates
 - [ ] Optional: test sharding module, SBOM/provenance module
 - [ ] Optional: companion-frontend E2E dispatch module
 
 ## Deferred follow-ups
 
-- SHA-pin first-party actions (checkout, setup-python, docker/*)
+- Signed attestations for the verified proof (replaces plain registry tags) if repo write access ever needs to be less trusted
 - Template a `docker-compose.prod.yml` and Dockerfile snippet that satisfy the pipeline's assumptions

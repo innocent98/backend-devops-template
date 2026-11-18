@@ -41,8 +41,11 @@ jobs:
   build-and-push:
     name: Build and push image
     runs-on: ubuntu-latest
-    # A rollback (image_tag given) skips the build.
-    if: github.event.inputs.image_tag == ''
+    # A rollback (image_tag given) skips the build. The ref check stops an
+    # accidental manual run from another branch; it is not a security control
+    # (a branch can edit its own copy of this file). The real control is the
+    # `staging` Environment's "Deployment branches" rule: develop only.
+    if: github.ref == 'refs/heads/develop' && github.event.inputs.image_tag == ''
     permissions:
       contents: read
       packages: write
@@ -50,11 +53,11 @@ jobs:
       image_ref: ${{ steps.ref.outputs.image_ref }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -71,7 +74,7 @@ jobs:
 
       - name: Build and push
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: true
@@ -99,7 +102,11 @@ jobs:
     needs: [build-and-push]
     # `always()` keeps the rollback path alive (build skipped); the checks stop a
     # failed build from ever reaching the VPS.
-    if: always() && needs.build-and-push.result != 'failure' && needs.build-and-push.result != 'cancelled'
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/develop' &&
+      needs.build-and-push.result != 'failure' &&
+      needs.build-and-push.result != 'cancelled'
     environment:
       name: staging
       url: ${{ vars.APP_URL }}
@@ -110,7 +117,7 @@ jobs:
       image_ref: ${{ steps.target.outputs.image_ref }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Choose the image to deploy
         id: target
@@ -156,13 +163,13 @@ jobs:
       name: staging
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '{{PY_VERSION}}'
 
-      - uses: snok/install-poetry@v1
+      - uses: snok/install-poetry@a783c322200f0519c7926aa6faa857c4e23e9263 # v1
         with:
           version: {{POETRY_VERSION}}
           virtualenvs-create: true
@@ -206,7 +213,7 @@ jobs:
 
       - name: Upload E2E log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: staging-api-e2e-logs
           path: staging-api-e2e.log
@@ -227,11 +234,11 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
