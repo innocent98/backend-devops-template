@@ -35,6 +35,7 @@ Ideas kept from Cofoundaz-api: digest deploys, proof tags, composite deploy acti
 | `.github-template/workflows/cd-staging.yml` | New: build, deploy, live E2E, mark verified, manual `image_tag` redeploy |
 | `.github-template/workflows/cd-production.yml` | New: resolve verified image, deploy; manual `image_tag` rollback |
 | `.github-template/actions/deploy-stack/action.yml` | New shared deploy |
+| `.github-template/workflows/registry-cleanup.yml`, `scripts/ghcr_prune.sh` | Added 2026-11-21: weekly GHCR retention (keeps 20 newest, 10 newest verified, tips of main/develop, anything under 14 days); manual runs dry-run by default |
 | `.github-template/dependabot.yml` | New: weekly bump PR for pinned actions (installed to `.github/dependabot.yml`) |
 | `.github-template/workflows/cd.yml`, `docker.yml` | Removed |
 | `scripts/ghcr_digest.sh` | New (from Cofoundaz-api, made generic) |
@@ -53,7 +54,8 @@ Config an adopting project needs: secrets `VPS_HOST`, `VPS_USERNAME`, `VPS_SSH_K
 | `install.sh` into a scratch repo (with a stale old `docker.yml` present) | exit 0, no leftover `{{PLACEHOLDER}}`, stale-file warning printed. Found and fixed a crash on `${API_IMAGE}` in the checklist text. |
 | `env.sh encrypt` then `deploy-stack` decrypt step; wrong key | round trip returns the same variables; wrong key fails with a clear error |
 | `ghcr_digest.sh` against a public GHCR image | existing tag returns a digest (rc 0); missing tag returns rc 2 |
-| **Not verified live:** the `imagetools create` retag keeping the same digest, the VPS deploy/rollback script, GHCR pull with `GITHUB_TOKEN`, E2E job | These need a real repo, GHCR package and VPS. The workflow asserts the digest match at mint time, so a retag problem fails loudly. First adoption (suggest a low-risk project) is the live test. |
+| `ghcr_prune.sh` retention rules, against a 40-version fixture with a stubbed `gh` | selected exactly the expected 15 versions; dry run made no delete calls; real run made 15; bad input rejected |
+| **Not verified live:** the `imagetools create` retag keeping the same digest, the GHCR list/delete API calls and whether `GITHUB_TOKEN` is allowed to delete package versions (it may need the repo's Admin role on the package), the VPS deploy/rollback script, GHCR pull with `GITHUB_TOKEN`, E2E job | These need a real repo, GHCR package and VPS. The workflow asserts the digest match at mint time, so a retag problem fails loudly. First adoption (suggest a low-risk project) is the live test. |
 
 ## Security review follow-up (2026-11-18, same day)
 

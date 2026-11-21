@@ -17,6 +17,7 @@ Legend: `[x]` done and verified · `[ ]` not done · "(static)" = linted and ins
 - [x] SOP: `docs/sop/2026-11-18-build-once-promote-pipeline.md`
 - [x] Commit and push to `origin` (367729a, 2026-11-18)
 - [x] Security review follow-up: rename bypass fixed, actions SHA-pinned, `dependabot.yml`, branch guards, Environment deployment-branch rules documented (2026-11-18)
+- [x] Registry cleanup: `registry-cleanup.yml` + `scripts/ghcr_prune.sh`, rules tested on fixtures (2026-11-21); live delete not yet verified
 - [ ] First live run on a real project; confirm retag digest match, VPS deploy, rollback
 
 ## Module 2: Adopt in existing projects

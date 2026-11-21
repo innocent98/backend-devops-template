@@ -125,7 +125,7 @@ export PROJECT_NAME PROJECT_SLUG DEPLOY_PATH HEALTH_PATH API_PORT PY_VERSION POE
 
 # --- Copy files ------------------------------------------------------------
 echo "Copying workflows…"
-for wf in ci.yml cd-staging.yml cd-production.yml; do
+for wf in ci.yml cd-staging.yml cd-production.yml registry-cleanup.yml; do
   src="$TEMPLATE_DIR/.github-template/workflows/$wf"
   dst="$TARGET/.github/workflows/$wf"
   copy_with_overwrite_check "$src" "$dst"

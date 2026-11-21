@@ -10,7 +10,7 @@ What it does **not** undo is the database. Migrations are not reversed, so keep 
 
 ## 2. Manual (a bad release is already live)
 
-Redeploy an earlier image. It must be one that was staging-verified; production refuses anything else.
+Redeploy an earlier image. It must be one that was staging-verified; production refuses anything else. Your rollback window is the newest 10 verified images; older ones are removed by the weekly registry cleanup (`CICD_PIPELINE.md`).
 
 1. Find the tag: the repository's **Packages** page, or the *Summary* of an earlier **CD (production)** run. Tags look like `sha-a1b2c3d`.
 2. **Actions → CD (production) → Run workflow** → enter the tag in `image_tag` → Run.

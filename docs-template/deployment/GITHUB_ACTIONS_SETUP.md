@@ -7,6 +7,7 @@ The pipeline is three workflows and one shared action in `.github/`:
 | `workflows/ci.yml` | PR to `develop`, push to `develop` | Lint, tests, Semgrep; on PRs also builds and scans the image (not pushed). |
 | `workflows/cd-staging.yml` | push to `develop`, manual | Build once, push to GHCR, deploy staging, live E2E, mark the image verified. |
 | `workflows/cd-production.yml` | push to `main`, manual (rollback) | Deploy the verified image. Never builds. |
+| `workflows/registry-cleanup.yml` | weekly; manual (dry run by default) | Prunes old GHCR image versions, keeping the rollback window. |
 | `actions/deploy-stack` | called by both CD workflows | Decrypt env, ship, pull by digest, migrate, health check, auto-rollback. |
 
 How they fit together: `CICD_PIPELINE.md`. How to release: `BRANCHING.md`.
@@ -122,6 +123,7 @@ Automatic on a failed deploy; manual by redeploying an earlier verified tag. See
 | Production: "No image for this commit" | `main` was not a fast-forward of `develop`. See `BRANCHING.md`. |
 | Production: "Not verified on staging" | The staging run for that commit failed, was cancelled, or is still running. |
 | `No such file or directory: /opt/…` | VPS bootstrap skipped: run Step 6. |
+| Registry cleanup: `FAILED to delete …` / 403 | Give the repository the **Admin** role on the package: Package settings → Manage Actions access. |
 | Health check never returns 200 | `docker compose logs --tail=200 api` on the VPS. Most common cause: a missing env var. |
 | `Could not decrypt .env.<env>.enc` | Wrong `ENV_ENCRYPTION_KEY` for that environment. |
 

@@ -35,6 +35,7 @@ Existing files are **skipped** by default (safe to re-run). Use `--force` to ove
   ci.yml             # PRs + develop: lint, test, Semgrep; PRs also image build + Trivy scan
   cd-staging.yml     # push develop: build once → GHCR → deploy staging → live E2E → mark verified
   cd-production.yml  # push main: deploy the verified image (never builds); manual run = rollback
+  registry-cleanup.yml  # weekly: prune old GHCR images, keep the rollback window (dry run by default when manual)
 .github/actions/
   deploy-stack/      # shared deploy: decrypt env, pull by digest, migrate, health check, auto-rollback
 .github/dependabot.yml   # weekly PR to bump the SHA-pinned actions
@@ -54,6 +55,7 @@ scripts/
   backup_db.sh        # dev-facing manual backup
   backup_cron.sh      # cron-safe production backup (auto-installed by the production deploy)
   ghcr_digest.sh      # looks up an image digest in GHCR (used by CD)
+  ghcr_prune.sh       # GHCR retention rules (used by registry-cleanup.yml)
   backup_status.sh    # backup health check
   restore_db.sh       # restore with pre-restore safety snapshot
   security-scan.sh    # Semgrep SAST gate (run locally or in CI)

@@ -26,6 +26,7 @@ PR → develop                 push to develop                         push to m
 | `ci.yml` | PR to `develop`; push to `develop` | Lint, tests, Semgrep. On PRs also builds the image (not pushed) and scans it with Trivy. `CI gate` is the single check to require. |
 | `cd-staging.yml` | push to `develop`; manual | Build and push the image, deploy to staging, run live E2E, then mark the image verified. |
 | `cd-production.yml` | push to `main`; manual (rollback) | Find the verified image for this commit and deploy it. |
+| `registry-cleanup.yml` | weekly; manual (dry run by default) | Deletes old image versions from GHCR, keeping what a rollback needs. |
 | `actions/deploy-stack` | called by both CD workflows | The shared deploy: decrypt env, ship, pull by digest, migrate, health check, roll back on failure. |
 | `scripts/ghcr_digest.sh` | called by CD | Looks up an image's digest in GHCR. |
 
@@ -41,6 +42,17 @@ After the live E2E passes, `cd-staging.yml` adds two tags to the tested image:
 ## Why `main` must be a fast-forward of `develop`
 
 Production finds the image by the commit SHA. A fast-forward keeps the SHA unchanged; a squash or merge commit creates a new SHA that no image was built for. See `BRANCHING.md` for the exact commands and branch settings.
+
+## Keeping images tidy
+
+Two places hold images, and each has a cleanup:
+
+| Where | Cleanup | Keeps |
+|---|---|---|
+| The VPS | `deploy-stack` runs `docker image prune -af --filter "until=72h"` after each successful deploy | The running image, plus unused images built in the last 72 hours (the filter counts from the image's build time, not when it was pulled). Rollback re-pulls from GHCR if needed. |
+| GHCR | `registry-cleanup.yml` (weekly), using `scripts/ghcr_prune.sh` | 20 newest versions, 10 newest staging-verified versions, the tips of `main` and `develop`, anything under 14 days old. |
+
+The limits are variables at the top of `ghcr_prune.sh` (`KEEP_NEWEST`, `KEEP_VERIFIED`, `MIN_AGE_DAYS`). Preview a cleanup first: **Actions → Registry cleanup → Run workflow** (dry run is ticked by default). A manual rollback can only target an image that still exists, so the last 10 verified images are your rollback window.
 
 ## Trust boundary: who can release
 
